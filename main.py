@@ -9,21 +9,16 @@ import string
 from nacl.pwhash import argon2i
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 
+from utils import mk_config
+
 LEN_INDICATOR = 2  # 2 bytes is enough for password
-
-
 NONCE_SIZE = 12
-
-
 ARGON_SALT_LENGTH = 16
+ARGON_KEY_LENGTH = 32
 
-user_config = pathlib.Path('~/.spassman').expanduser()
-if not user_config.exists():
-    with open(user_config, 'wb') as f:
-        salt = secrets.token_bytes(ARGON_SALT_LENGTH)
-        f.write(salt)
-with open(user_config, 'rb') as f:
-    salt = f.read()
+
+# Simply store necessary configuration in ~/.spassman
+CONFIG = mk_config()
 
 
 @dataclasses.dataclass
@@ -53,6 +48,9 @@ class Record:
 
 
 def mkpassword(length: int) -> str:
+    # Creates a password of ~128 but entropy
+    # todo: multi word
+    # todo: makes dashes in between for better visibility?
     letters = string.ascii_letters
     digits = string.digits
     special_chars = string.printable
@@ -63,15 +61,15 @@ def mkpassword(length: int) -> str:
 
 def mkrecord(username: str, password: str) -> bytes:
     # encrypt credentials
-    key = secrets.token_bytes(32)
+    key = secrets.token_bytes(32)  # pure cryptographically random key of 256 bit
     nonce = secrets.token_bytes(NONCE_SIZE)
     cipher = ChaCha20Poly1305(key)
     payload = Record(username, password).serialize()
     encrypted_payload = nonce + cipher.encrypt(nonce, payload, None)
-    # derive the key, use argon2i
-    master_password = getpass.getpass('master password')
-    master_key = kdf(master_password)
-    # encrypt the key
+
+    master_key = get_master_key()
+
+    # encrypt the file key with the master key
     key_cipher = ChaCha20Poly1305(master_key)
     key_nonce = secrets.token_bytes(NONCE_SIZE)
     encrypted_key = key_cipher.encrypt(key_nonce, key, None)
@@ -79,15 +77,14 @@ def mkrecord(username: str, password: str) -> bytes:
     return blob
 
 
-def kdf(master_password: str) -> bytes:
-    return argon2i.kdf(32, master_password.encode(), salt)
-
+def get_master_key() -> bytes:
+    # Uses Argon to derive a key from the master password
+    master_password = getpass.getpass('master password')
+    return argon2i.kdf(ARGON_KEY_LENGTH, master_password.encode(), CONFIG['salt'])
 
 
 def decrypt_record(blob: bytes) -> Record:
-    # derive the key, use argon2i
-    master_password = getpass.getpass('master password')
-    master_key = kdf(master_password)
+    master_key = get_master_key()
 
     key_cipher = ChaCha20Poly1305(master_key)
     key_nonce, encrypted_key = blob[:12], blob[12:12 + 48]
@@ -107,25 +104,12 @@ if __name__ == '__main__':
         description='symmetric encryption only password manager. Quantum Safe!',
         epilog='k thanks')
 
-    # group = parser.add_mutually_exclusive_group()
-    # group.add_argument('--init', type=pathlib.Path, required=False, help='Init a new password safe, must be a folder')
     parser.add_argument('--store', type=pathlib.Path, required=False, help='Path to the password safe, must be a folder')
-    #
-
-    # group.add_argument('generate', required=False, type=str)
     subparsers = parser.add_subparsers(dest="command")
     generate_parser = subparsers.add_parser('generate')
     generate_parser.add_argument('service')
     insert_parser = subparsers.add_parser('insert')
     insert_parser.add_argument('service')
-    # subparsers = parser.add_subparsers(help='generate help', dest='generate')
-    #
-    # parser_a = subparsers.add_parser('command', help='command_generate help')
-    # parser_a.add_argument('service', type=str)
-    #
-    # parser_b = subparsers.add_parser('insert', help='command_generate help')
-    # parser_b.add_argument('service2', type=str)
-
     args = parser.parse_args()
 
     if args.command == 'generate':
@@ -140,5 +124,9 @@ if __name__ == '__main__':
         blob = mkrecord(username, password)
         a = decrypt_record(blob)
         print(a)
-
-    # parser.print_help()
+    if args.command == 'test':
+        print('Not implemented yet')  # todo make tests here
+    if args.command == 'backup':
+        print('Not implemented yet')  # todo
+        print('- We need all the password files')
+        print('- We need the salt for the argon key derivation')
