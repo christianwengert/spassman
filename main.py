@@ -117,6 +117,7 @@ def ask_for_entry():
     index = None
     while index is None:
         r = input('Type the number of the entry you want ')
+        # noinspection PyBroadException
         try:
             index = int(r)
         except Exception as _e:
